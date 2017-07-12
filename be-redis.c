@@ -47,6 +47,10 @@ struct redis_backend {
 	int db;
 };
 
+redisReply* callRedisCommand(struct redis_backend *conf, const char *username, const char *topic, int acc);
+int reverse_find_character(const char s[], char c);
+void append_hash_symbol(const char* s, char **d);
+
 
 static int be_redis_reconnect(struct redis_backend *conf)
 {
@@ -188,26 +192,64 @@ int be_redis_aclcheck(void *handle, const char *clientid, const char *username, 
     return 1;
   }
 
-	char *query = malloc(strlen(conf->aclquery) + strlen(username) + strlen(topic) + 128);
-	sprintf(query, conf->aclquery, username, topic);
-
-
-	r = redisCommand(conf->redis, query, username, acc);
-	if (r == NULL || conf->redis->err != REDIS_OK) {
-		be_redis_reconnect(conf);
-		return BACKEND_ERROR;
+  r = callRedisCommand(conf, username, topic, acc);
+  if (r == NULL) {
+    return BACKEND_ERROR;
 	}
 
-	free(query);
+	if (r->type == REDIS_REPLY_NIL) {
+		freeReplyObject(r);
+		char *hash_topic;
+		append_hash_symbol(topic, &hash_topic);
+		r = callRedisCommand(conf, username, hash_topic, acc);
+		if (r == NULL) {
+			return BACKEND_ERROR;
+		}
+	}
 
 	int answer = 0;
 	if (r->type == REDIS_REPLY_STRING) {
 		int x = atoi(r->str);
 		if (x >= acc)
 			answer = 1;
-	}
+	} 
 
 	freeReplyObject(r);
 	return answer;
+}
+
+int reverse_find_character(const char s[], char c){
+	int pos = -1;
+	size_t i;
+	for (i = 0; s[i]; ++i) {
+		if (s[i] == c) {
+			pos = i;	
+		}
+	}
+	return pos;			
+}
+
+void append_hash_symbol(const char* s, char **d) {
+	int pos = reverse_find_character(s, '/');
+	int size = pos + 3;
+	*d = malloc(size);
+	memcpy(*d, s, pos + 1);
+	(*d)[pos + 1] = '+';
+	(*d)[pos + 2] = '\0';
+}
+
+redisReply* callRedisCommand(struct redis_backend *conf, const char *username, const char *topic, int acc) {
+	char *query = malloc(strlen(conf->aclquery) + strlen(username) + strlen(topic) + 128);
+	sprintf(query, conf->aclquery, username, topic);
+
+	redisReply *r;
+	r = redisCommand(conf->redis, query, username, acc);
+	if (r == NULL || conf->redis->err != REDIS_OK) {
+		be_redis_reconnect(conf);
+		return NULL;
+	}
+	free(query);
+
+	return r;
 }
 #endif /* BE_REDIS */
