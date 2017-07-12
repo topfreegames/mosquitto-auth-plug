@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include "log.h"
 #include "hash.h"
 #include "backends.h"
@@ -49,8 +50,7 @@ struct redis_backend {
 
 redisReply* callRedisCommand(struct redis_backend *conf, const char *username, const char *topic, int acc);
 int reverse_find_character(const char s[], char c);
-void append_hash_symbol(const char* s, char **d);
-
+bool append_hash_symbol(const char* s, char **d);
 
 static int be_redis_reconnect(struct redis_backend *conf)
 {
@@ -188,22 +188,24 @@ int be_redis_aclcheck(void *handle, const char *clientid, const char *username, 
 	if (conf == NULL || conf->redis == NULL || username == NULL)
 		return 0;
 
-  if (strlen(conf->aclquery) == 0) {
-    return 1;
-  }
+	if (strlen(conf->aclquery) == 0) {
+		return 1;
+	}
 
-  r = callRedisCommand(conf, username, topic, acc);
-  if (r == NULL) {
-    return BACKEND_ERROR;
+	r = callRedisCommand(conf, username, topic, acc);
+	if (r == NULL) {
+		return BACKEND_ERROR;
 	}
 
 	if (r->type == REDIS_REPLY_NIL) {
-		freeReplyObject(r);
 		char *hash_topic;
-		append_hash_symbol(topic, &hash_topic);
-		r = callRedisCommand(conf, username, hash_topic, acc);
-		if (r == NULL) {
-			return BACKEND_ERROR;
+		bool valid = append_hash_symbol(topic, &hash_topic);
+		if (valid) {
+			freeReplyObject(r);
+			r = callRedisCommand(conf, username, hash_topic, acc);
+			if (r == NULL) {
+				return BACKEND_ERROR;
+			}
 		}
 	}
 
@@ -229,13 +231,17 @@ int reverse_find_character(const char s[], char c){
 	return pos;			
 }
 
-void append_hash_symbol(const char* s, char **d) {
+bool append_hash_symbol(const char* s, char **d) {
 	int pos = reverse_find_character(s, '/');
+	if (s[pos + 1] == '\0') {
+		return false;
+	}
 	int size = pos + 3;
 	*d = malloc(size);
 	memcpy(*d, s, pos + 1);
 	(*d)[pos + 1] = '+';
 	(*d)[pos + 2] = '\0';
+	return true;
 }
 
 redisReply* callRedisCommand(struct redis_backend *conf, const char *username, const char *topic, int acc) {
